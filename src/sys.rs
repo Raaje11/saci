@@ -50,6 +50,7 @@ pub enum Module {
     Assembler = 6,
     Transformer = 7,
     Harness = 8,
+    Etf = 9,
 }
 
 #[repr(u8)]
@@ -84,6 +85,7 @@ pub enum ErrorCode {
     ArithmeticError = 15,
     NonBinaryNumericalAggregate = 16,
     OutputValueMismatch = 17,
+    InvalidSuperpositionDim = 18,
 }
 
 #[repr(u8)]
@@ -100,6 +102,8 @@ pub enum EventKind {
     ForwardCompleted = 8,
     QueueFull = 9,
     ResourcePressure = 10,
+    EtfBuilt = 11,
+    ModelSuperposed = 12,
 }
 
 #[repr(u8)]

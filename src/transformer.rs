@@ -48,6 +48,8 @@ pub struct CompiledTransformer {
     pub pos_embed: Vec<f64>,
     /// `[d_model * out_dim]`
     pub unembed: Vec<f64>,
+    /// Per-residual-dim flag: true for `one` and 1D numerical/scalar dims
+    pub numerical_mask: Vec<bool>,
     pub layers: Vec<CompiledLayer>,
 }
 

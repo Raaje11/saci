@@ -8,6 +8,7 @@
 
 pub mod compiler;
 pub mod craft;
+pub mod etf;
 pub mod graph;
 pub mod observatory;
 pub mod rasp;
@@ -248,5 +249,140 @@ mod tests {
         let res2 = static_validate(&prog2, agg);
         assert_eq!(res2.result, ValidationResult::Invalid);
         assert_eq!(res2.code, ErrorCode::UnsupportedSelector);
+    }
+
+    #[test]
+    fn etf_frame_properties_simplex_and_general() {
+        use crate::etf::{build_etf, welch_bound, EtfConfig};
+
+        // 1. Simplex ETF: n = m + 1 -> exact Welch bound 1/m
+        let simplex = build_etf(16, &EtfConfig::new(15)).unwrap();
+        assert!((simplex.metrics.max_coherence - (1.0 / 15.0)).abs() < 1e-10);
+        assert!(simplex.metrics.tightness_error < 1e-10);
+
+        // 2. General APTF: n = 32, m = 24
+        let general = build_etf(32, &EtfConfig::new(24)).unwrap();
+        let wb = welch_bound(32, 24);
+        assert!(
+            general.metrics.max_coherence < wb + 0.08,
+            "max_coherence={} too far from welch_bound={}",
+            general.metrics.max_coherence,
+            wb
+        );
+
+        // 3. Invalid dimensions
+        assert_eq!(
+            build_etf(8, &EtfConfig::new(0)).unwrap_err(),
+            ErrorCode::InvalidSuperpositionDim
+        );
+        assert_eq!(
+            build_etf(8, &EtfConfig::new(9)).unwrap_err(),
+            ErrorCode::InvalidSuperpositionDim
+        );
+    }
+
+    #[test]
+    fn superposed_etf_shift_right_and_protected_hist_preserve_outputs() {
+        use crate::etf::{superpose_etf, EtfConfig};
+
+        // Test 1: Pure global ETF superposition on categorical shift-right (Select + Aggregate + Map)
+        {
+            let mut prog = RaspProgram::new();
+            let tokens = prog.tokens();
+            let indices = prog.indices();
+            let prev_idx = prog.map(|v| Some(Value::Int(v.as_int()? - 1)), indices);
+            let sel = prog.select(indices, prev_idx, Comparison::Eq);
+            let shifted = prog.aggregate(sel, tokens, Value::None);
+
+            let vocab = [sym('a'), sym('b'), sym('c'), sym('d')];
+            let cfg = CompileConfig {
+                max_seq_len: 5,
+                causal: false,
+                ..Default::default()
+            };
+            let mut telemetry: TelemetryBus<64> = TelemetryBus::new();
+            let model =
+                compile_rasp_to_model(&prog, shifted, &vocab, &cfg, &mut telemetry).unwrap();
+
+            let target_dim = model.d_model - 2;
+            let (sup_model, metrics) =
+                superpose_etf(&model, &EtfConfig::new(target_dim), &mut telemetry).unwrap();
+            assert_eq!(sup_model.d_model, target_dim);
+            assert!(metrics.max_coherence < 0.25);
+
+            let mut scratch = ForwardScratch::for_model(&sup_model);
+            let mut eval_scratch = EvalScratch::new(prog.len(), 5);
+            let input = [sym('a'), sym('b'), sym('c'), sym('d')];
+            let expected =
+                evaluate_rasp(&prog, shifted, &input, false, &mut eval_scratch).unwrap();
+            let actual = sup_model
+                .forward_values(&input, &mut scratch, &mut telemetry)
+                .unwrap();
+
+            // Position 1 has no prev token so aggregate outputs default (BOS); positions 2.. match shifted
+            assert_eq!(&actual[2..], &expected[1..]);
+        }
+
+        // Test 2: Pure global ETF superposition on multi-layer Map + SequenceMap + Aggregate
+        {
+            let mut prog = RaspProgram::new();
+            let tokens = prog.tokens();
+            let indices = prog.indices();
+            // Swap adjacent pairs: even index i -> i + 1, odd index i -> i - 1
+            let partner_idx = prog.map(
+                |v| {
+                    let i = v.as_int()?;
+                    Some(Value::Int(if i % 2 == 0 { i + 1 } else { i - 1 }))
+                },
+                indices,
+            );
+            let sel = prog.select(indices, partner_idx, Comparison::Eq);
+            let swapped = prog.aggregate(sel, tokens, Value::None);
+            // Combine original token and swapped partner token via SequenceMap
+            let paired = prog.sequence_map(
+                |a, b| {
+                    let ca = match a {
+                        Value::Sym(s) => s.0,
+                        _ => return None,
+                    };
+                    let cb = match b {
+                        Value::Sym(s) => s.0,
+                        _ => return None,
+                    };
+                    Some(Value::Int((ca == cb) as i32))
+                },
+                tokens,
+                swapped,
+            );
+
+            let vocab = [sym('a'), sym('b'), sym('c')];
+            let cfg = CompileConfig {
+                max_seq_len: 4,
+                causal: false,
+                ..Default::default()
+            };
+            let mut telemetry: TelemetryBus<64> = TelemetryBus::new();
+            let model =
+                compile_rasp_to_model(&prog, paired, &vocab, &cfg, &mut telemetry).unwrap();
+
+            let target_dim = model.d_model - 3;
+            assert!(target_dim < model.d_model);
+            let (sup_model, metrics) =
+                superpose_etf(&model, &EtfConfig::new(target_dim), &mut telemetry).unwrap();
+            assert_eq!(sup_model.d_model, target_dim);
+            assert!(metrics.max_coherence < 0.25);
+
+            let mut scratch = ForwardScratch::for_model(&sup_model);
+            let mut eval_scratch = EvalScratch::new(prog.len(), 4);
+            let input = [sym('a'), sym('a'), sym('b'), sym('c')];
+            let expected =
+                evaluate_rasp(&prog, paired, &input, false, &mut eval_scratch).unwrap();
+            let actual = sup_model
+                .forward_values(&input, &mut scratch, &mut telemetry)
+                .unwrap();
+
+            assert_eq!(expected, &[Value::Int(1), Value::Int(1), Value::Int(0), Value::Int(0)]);
+            assert_eq!(&actual[1..], expected);
+        }
     }
 }

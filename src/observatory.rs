@@ -17,6 +17,7 @@ pub fn module_name(m: Module) -> &'static str {
         Module::Assembler => "Assembler",
         Module::Transformer => "Transformer",
         Module::Harness => "Harness",
+        Module::Etf => "ETF",
     }
 }
 
@@ -53,6 +54,7 @@ pub fn error_description(e: ErrorCode) -> &'static str {
             "Numerical aggregate currently only supports binary values"
         }
         ErrorCode::OutputValueMismatch => "Output value missing from output basis",
+        ErrorCode::InvalidSuperpositionDim => "Invalid ETF superposition dimension",
     }
 }
 
@@ -69,6 +71,8 @@ pub fn event_description(ev: EventKind) -> &'static str {
         EventKind::ForwardCompleted => "Transformer forward pass completed",
         EventKind::QueueFull => "Telemetry or task ring buffer full",
         EventKind::ResourcePressure => "Resource pressure detected",
+        EventKind::EtfBuilt => "Equiangular Tight Frame constructed",
+        EventKind::ModelSuperposed => "Transformer weights compressed via ETF superposition",
     }
 }
 

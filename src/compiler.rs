@@ -1061,6 +1061,7 @@ fn assemble_transformer(
         token_embed,
         pos_embed,
         unembed,
+        numerical_mask: vec![false; d],
         layers,
     }
 }
@@ -1262,6 +1263,19 @@ pub fn compile_rasp_to_model<const CAP: usize>(
         .iter()
         .position(|&v| v == cfg.pad_value)
         .map(|i| i as u32);
+
+    model.numerical_mask = residual_space
+        .basis
+        .iter()
+        .map(|&d| {
+            let bd = reg.get(d);
+            matches!(
+                bd.ns,
+                DirNamespace::One | DirNamespace::SelectorWidthAttnOut(_)
+            ) || matches!(bd.val, BasisVal::None)
+                || d == bos_dir
+        })
+        .collect();
 
     telemetry.emit(
         Module::Assembler,
