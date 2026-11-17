@@ -1,0 +1,7 @@
+[package]
+name = "tracr-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Pure-Rust Tracr (RASP-to-Transformer weight-space compiler) compliant with deterministic systems engineering doctrine"
+
+[dependencies]
